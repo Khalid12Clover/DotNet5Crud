@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 1,
+  "deployments": {
+    "aspNetCoreWeb": [
+      {
+        "name": "DotNet5Crud",
+        "parameters": {
+          "appBundle": "DotNet5Crud.zip",
+          "iisPath": "/",
+          "iisWebSite": "Default Web Site"
+        }
+      }
+    ]
+  }
+
+}

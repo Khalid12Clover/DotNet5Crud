@@ -1,0 +1,43 @@
+name: dockercompose10560196182563871692
+services:
+  dotnet5crud:
+    build:
+      context: D:\Khalid old hdd\ASP.NETCORE5.0CRUD\ASP.NET CORE 5.0 CRUD\DotNet5Crud
+      dockerfile: Dockerfile
+    container_name: dot-net5-crud
+    depends_on:
+      dotnet5cruddb:
+        condition: service_started
+        required: true
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      DB_HOST: dotnet5cruddb
+      DB_NAME: CompanyDB
+      DB_SA_PASSWORD: clover@123
+    image: dotnet5crud
+    networks:
+      dotnet5crudnetwork: null
+    ports:
+      - mode: ingress
+        target: 80
+        published: "8087"
+        protocol: tcp
+      - mode: ingress
+        target: 80
+        protocol: tcp
+  dotnet5cruddb:
+    container_name: dot-net5-crud-db
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: clover@123
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    networks:
+      dotnet5crudnetwork: null
+    ports:
+      - mode: ingress
+        target: 1433
+        published: "8080"
+        protocol: tcp
+networks:
+  dotnet5crudnetwork:
+    name: dockercompose10560196182563871692_dotnet5crudnetwork
