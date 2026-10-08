@@ -1,3 +1,4 @@
+```yaml
 trigger:
   branches:
     include:
@@ -8,39 +9,67 @@ pool:
 
 variables:
   buildConfiguration: 'Release'
+  imageName: 'dotnet5crud'
+  imageTag: '$(Build.BuildId)'
 
 steps:
 
+# ==========================================
+# 1. Install .NET 8 SDK
+# ==========================================
 - task: UseDotNet@2
   displayName: 'Install .NET 8 SDK'
   inputs:
     packageType: 'sdk'
     version: '8.x'
 
+# ==========================================
+# 2. Verify .NET
+# ==========================================
+- script: |
+    dotnet --version
+    dotnet --list-sdks
+    dotnet --list-runtimes
+  displayName: 'Verify .NET installation'
+
+# ==========================================
+# 3. Restore NuGet packages
+# ==========================================
 - task: DotNetCoreCLI@2
   displayName: 'Restore NuGet packages'
   inputs:
     command: 'restore'
     projects: 'DotNet5Crud.csproj'
 
+# ==========================================
+# 4. Build application
+# ==========================================
 - task: DotNetCoreCLI@2
-  displayName: 'Build application'
+  displayName: 'Build .NET application'
   inputs:
     command: 'build'
     projects: 'DotNet5Crud.csproj'
     arguments: '--configuration $(buildConfiguration) --no-restore'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Publish application'
+# ==========================================
+# 5. Build Docker image
+# ==========================================
+- task: Docker@2
+  displayName: 'Build Docker image'
   inputs:
-    command: 'publish'
-    projects: 'DotNet5Crud.csproj'
-    arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/app --no-build'
-    zipAfterPublish: true
+    command: 'build'
+    Dockerfile: 'Dockerfile'
+    buildContext: '$(Build.SourcesDirectory)'
+    repository: '$(imageName)'
+    tags: |
+      $(imageTag)
+      latest
 
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Build Artifact'
-  inputs:
-    pathToPublish: '$(Build.ArtifactStagingDirectory)/app'
-    artifactName: 'DotNet5Crud'
-    publishLocation: 'Container'
+# ==========================================
+# 6. Verify Docker image
+# ==========================================
+- script: |
+    docker images
+    docker image inspect $(imageName):$(imageTag)
+  displayName: 'Verify Docker image'
+```
