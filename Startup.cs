@@ -26,7 +26,7 @@ namespace DotNet5Crud
             //var dbHost = Environment.GetEnvironmentVariable("DB_HOST");
             // var dbName = Environment.GetEnvironmentVariable("DB_NAME");            
             //var dbPassword = Environment.GetEnvironmentVariable("DB_SA_PASSWORD");
-            var dbHost = "localhost";
+            var dbHost = "192.168.9.61,1433";
             var dbName = "CompanyDB";                  
             var dbPassword = "Clover@987654321";
             var connectionString = $"Data Source={dbHost};Initial Catalog={dbName};User ID=sa; Password={dbPassword};Encrypt=False";
