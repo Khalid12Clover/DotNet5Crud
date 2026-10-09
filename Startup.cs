@@ -24,10 +24,13 @@ namespace DotNet5Crud
         public void ConfigureServices(IServiceCollection services)
         {
             //var dbHost = Environment.GetEnvironmentVariable("DB_HOST");
-            //var dbName = Environment.GetEnvironmentVariable("DB_NAME");            
-           // var dbPassword = Environment.GetEnvironmentVariable("DB_SA_PASSWORD");
-            //var connectionString = $"Data Source={dbHost};Initial Catalog={dbName}; Integrated Security = False; User ID=sa; Password={dbPassword}";
-             var connectionString = Configuration.GetConnectionString("CompanyDB");
+            // var dbName = Environment.GetEnvironmentVariable("DB_NAME");            
+            //var dbPassword = Environment.GetEnvironmentVariable("DB_SA_PASSWORD");
+            var dbHost = "localhost";
+            var dbName = "CompanyDB";                  
+            var dbPassword = "Clover@987654321";
+            var connectionString = $"Data Source={dbHost};Initial Catalog={dbName};User ID=sa; Password={dbPassword};Encrypt=False";
+             //var connectionString = Configuration.GetConnectionString("CompanyDB");
             services.AddDbContextPool<CompanyDBContext>(option => option.UseSqlServer(connectionString));
             services.AddControllersWithViews();
         }
