@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 trigger:
   branches:
     include:
@@ -11,27 +11,41 @@ variables:
   buildConfiguration: 'Release'
   imageName: 'dotnet5crud'
   imageTag: '$(Build.BuildId)'
+  dockerHubUsername: 'khaliddocker1205'
+  openshiftServer: 'https://api.rm2.thpm.p1.openshiftapps.com:6443'
+  openshiftProject: 'khalid-ansari-dev'
+  ocExe: 'C:\oc\oc.exe'
 
 steps:
-
+# 1. Install .NET 8 SDK
 - task: UseDotNet@2
   displayName: 'Install .NET 8 SDK'
   inputs:
     packageType: 'sdk'
     version: '8.x'
 
-- script: |
-    dotnet --version
-    dotnet --list-sdks
-    dotnet --list-runtimes
-  displayName: 'Verify .NET installation'
+# 2. Verify .NET and Docker
+- task: PowerShell@2
+  displayName: 'Verify build tools'
+  inputs:
+    targetType: 'inline'
+    script: |
+      dotnet --version
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      docker version
+      if ($LASTEXITCODE -ne 0) {
+        throw "Docker Engine is not accessible."
+      }
+
+# 3. Restore NuGet packages
 - task: DotNetCoreCLI@2
   displayName: 'Restore NuGet packages'
   inputs:
     command: 'restore'
     projects: 'DotNet5Crud.csproj'
 
+# 4. Build the .NET application
 - task: DotNetCoreCLI@2
   displayName: 'Build .NET application'
   inputs:
@@ -39,66 +53,138 @@ steps:
     projects: 'DotNet5Crud.csproj'
     arguments: '--configuration $(buildConfiguration) --no-restore'
 
-- task: Docker@2
-  displayName: 'Build Docker image'
+# 5. Build and push the Docker image
+- task: PowerShell@2
+  displayName: 'Build and push image to Docker Hub'
   inputs:
-    command: 'build'
-    Dockerfile: 'Dockerfile'
-    buildContext: '$(Build.SourcesDirectory)'
-    repository: '$(imageName)'
-    tags: |
-      $(imageTag)
-      latest
+    targetType: 'inline'
+    script: |
+      $ErrorActionPreference = 'Stop'
 
-- script: |
-    docker images
-    docker image inspect $(imageName):$(imageTag)
-  displayName: 'Verify Docker image'
-=======
-trigger:
-  branches:
-    include:
-      - main
+      $image = "docker.io/$env:DOCKERHUB_USERNAME/$(imageName):$(imageTag)"
+      $latestImage = "docker.io/$env:DOCKERHUB_USERNAME/$(imageName):latest"
 
-pool:
-  name: 'default'
+      $env:DOCKERHUB_TOKEN |
+        docker login --username $env:DOCKERHUB_USERNAME --password-stdin
 
-variables:
-  buildConfiguration: 'Release'
+      if ($LASTEXITCODE -ne 0) {
+        throw "Docker Hub login failed."
+      }
 
-steps:
+      docker build `
+        -f "$(Build.SourcesDirectory)\Dockerfile" `
+        -t $image `
+        -t $latestImage `
+        "$(Build.SourcesDirectory)"
 
-- task: UseDotNet@2
-  displayName: 'Install .NET 8 SDK'
+      if ($LASTEXITCODE -ne 0) {
+        throw "Docker image build failed."
+      }
+
+      docker push $image
+      if ($LASTEXITCODE -ne 0) {
+        throw "Docker image push failed: $image"
+      }
+
+      docker push $latestImage
+      if ($LASTEXITCODE -ne 0) {
+        throw "Docker image push failed: $latestImage"
+      }
+
+      Write-Host "Successfully pushed $image"
+  env:
+    DOCKERHUB_USERNAME: $(dockerHubUsername)
+    DOCKERHUB_TOKEN: $(DOCKERHUB_TOKEN)
+
+# 6. Log in to OpenShift and deploy the new image
+- task: PowerShell@2
+  displayName: 'Deploy image to OpenShift'
   inputs:
-    packageType: 'sdk'
-    version: '8.x'
+    targetType: 'inline'
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $oc = "$(ocExe)"
+      $image = "docker.io/$(dockerHubUsername)/$(imageName):$(imageTag)"
 
-- task: DotNetCoreCLI@2
-  displayName: 'Restore NuGet packages'
-  inputs:
-    command: 'restore'
-    projects: 'DotNet5Crud.csproj'
+      if (-not (Test-Path $oc)) {
+        throw "OpenShift CLI not found at $oc. Update the ocExe variable."
+      }
 
-- task: DotNetCoreCLI@2
-  displayName: 'Build application'
-  inputs:
-    command: 'build'
-    projects: 'DotNet5Crud.csproj'
-    arguments: '--configuration $(buildConfiguration) --no-restore'
+      & $oc login `
+        --server="$(openshiftServer)" `
+        --token="$env:OPENSHIFT_TOKEN"
 
-- task: DotNetCoreCLI@2
-  displayName: 'Publish application'
-  inputs:
-    command: 'publish'
-    projects: 'DotNet5Crud.csproj'
-    arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/app --no-build'
-    zipAfterPublish: true
+      if ($LASTEXITCODE -ne 0) {
+        throw "OpenShift login failed."
+      }
 
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Build Artifact'
-  inputs:
-    pathToPublish: '$(Build.ArtifactStagingDirectory)/app'
-    artifactName: 'DotNet5Crud'
-    publishLocation: 'Container'
->>>>>>> a912e2b (Add Azure DevOps CI pipeline)
+      & $oc project "$(openshiftProject)"
+      if ($LASTEXITCODE -ne 0) {
+        throw "Could not access the OpenShift project."
+      }
+
+      # Create the application if it does not exist;
+      # otherwise, update its container image.
+      & $oc get deployment dotnet5crud *> $null
+
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "Updating existing deployment to $image"
+
+        & $oc set image deployment/dotnet5crud `
+          dotnet5crud="$image"
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to update the deployment image."
+        }
+      }
+      else {
+        Write-Host "Creating application from $image"
+
+        & $oc new-app `
+          --image="$image" `
+          --name=dotnet5crud
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to create the OpenShift application."
+        }
+      }
+
+      # Ensure a Service exists.
+      & $oc get service dotnet5crud *> $null
+
+      if ($LASTEXITCODE -ne 0) {
+        & $oc expose deployment/dotnet5crud `
+          --port=8080 `
+          --target-port=8080
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to create the application Service."
+        }
+      }
+
+      # Ensure a Route exists.
+      & $oc get route dotnet5crud *> $null
+
+      if ($LASTEXITCODE -ne 0) {
+        & $oc expose service/dotnet5crud
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to expose the application Route."
+        }
+      }
+
+      # Wait for the application to become ready.
+      & $oc rollout status deployment/dotnet5crud `
+        --timeout=180s
+
+      if ($LASTEXITCODE -ne 0) {
+        & $oc get pods
+        & $oc logs deployment/dotnet5crud --tail=100
+        throw "OpenShift deployment rollout failed."
+      }
+
+      & $oc get deployment,pods,services,routes
+
+      Write-Host "Deployment completed. Image: $image"
+  env:
+    OPENSHIFT_TOKEN: $(OPENSHIFT_TOKEN)
