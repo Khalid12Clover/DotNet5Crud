@@ -25,12 +25,14 @@ steps:
     packageType: 'sdk'
     version: '8.x'
 
-# 2. Verify .NET and Docker
+# 2. Verify .NET SDK and Docker Engine
 - task: PowerShell@2
   displayName: 'Verify build tools'
   inputs:
     targetType: 'inline'
     script: |
+      $ErrorActionPreference = 'Stop'
+
       dotnet --version
       if ($LASTEXITCODE -ne 0) {
         throw "Unable to run .NET SDK."
@@ -48,7 +50,7 @@ steps:
     command: 'restore'
     projects: 'DotNet5Crud.csproj'
 
-# 4. Build the .NET application
+# 4. Build .NET application
 - task: DotNetCoreCLI@2
   displayName: 'Build .NET application'
   inputs:
@@ -56,9 +58,9 @@ steps:
     projects: 'DotNet5Crud.csproj'
     arguments: '--configuration $(buildConfiguration) --no-restore'
 
-# 5. Build and push the Docker image using the service connection
+# 5. Build and push image to Docker Hub
 - task: Docker@2
-  displayName: 'Build and push image to Docker Hub'
+  displayName: 'Build and push Docker image'
   inputs:
     containerRegistry: '$(dockerHubServiceConnection)'
     repository: '$(dockerHubUsername)/$(imageName)'
@@ -71,7 +73,7 @@ steps:
 
 # 6. Deploy to OpenShift
 - task: PowerShell@2
-  displayName: 'Deploy image to OpenShift'
+  displayName: 'Deploy to OpenShift'
   inputs:
     targetType: 'inline'
     script: |
@@ -79,101 +81,89 @@ steps:
 
       $oc = "$(ocExe)"
       $image = "docker.io/$(dockerHubUsername)/$(imageName):$(imageTag)"
+      $server = "$(openshiftServer)"
+      $project = "$(openshiftProject)"
 
       if (-not (Test-Path $oc)) {
         throw "OpenShift CLI not found at $oc"
       }
 
       if ([string]::IsNullOrWhiteSpace($env:OPENSHIFT_TOKEN)) {
-        throw "OPENSHIFT_TOKEN is missing. Configure it as a secret pipeline variable."
+        throw "OPENSHIFT_TOKEN is missing. Add it as a secret pipeline variable."
       }
 
-      # Log in to OpenShift
-      & $oc login `
-        --server="$(openshiftServer)" `
-        --token="$env:OPENSHIFT_TOKEN"
-
+      # Login
+      & $oc login "--server=$server" "--token=$env:OPENSHIFT_TOKEN"
       if ($LASTEXITCODE -ne 0) {
-        throw "OpenShift login failed."
+        throw "OpenShift login failed. Check whether the token is valid."
       }
 
       # Select project
-      & $oc project "$(openshiftProject)"
+      & $oc project $project
       if ($LASTEXITCODE -ne 0) {
-        throw "Could not access OpenShift project."
+        throw "Cannot access OpenShift project $project."
       }
 
-      # Create or update the deployment
+      # Create or update application
       & $oc get deployment dotnet5crud *> $null
       $deploymentExists = ($LASTEXITCODE -eq 0)
 
       if ($deploymentExists) {
-        Write-Host "Updating deployment to $image"
+        Write-Host "Updating deployment to image: $image"
 
-        & $oc set image deployment/dotnet5crud `
-          dotnet5crud="$image"
-
+        & $oc set image deployment/dotnet5crud "dotnet5crud=$image"
         if ($LASTEXITCODE -ne 0) {
-          throw "Failed to update deployment image."
+          throw "Failed to update deployment image. Verify the container name."
         }
       }
       else {
-        Write-Host "Creating application from $image"
+        Write-Host "Creating application from image: $image"
 
-        & $oc new-app `
-          --image="$image" `
-          --name=dotnet5crud
-
+        & $oc new-app "--image=$image" --name=dotnet5crud
         if ($LASTEXITCODE -ne 0) {
-          throw "Failed to create application."
+          throw "Failed to create OpenShift application."
         }
       }
 
-      # Wait until the Deployment exists
+      # Wait for rollout
       & $oc rollout status deployment/dotnet5crud --timeout=180s
-
-      if ($LASTEXITCODE -ne 0) {
-        & $oc get pods
-        & $oc logs deployment/dotnet5crud --tail=100
-        throw "Initial deployment rollout failed."
-      }
-
-      # Ensure the Service exists
-      & $oc get service dotnet5crud *> $null
-
-      if ($LASTEXITCODE -ne 0) {
-        & $oc expose deployment/dotnet5crud `
-          --port=8080 `
-          --target-port=8080
-
-        if ($LASTEXITCODE -ne 0) {
-          throw "Failed to create Service."
-        }
-      }
-
-      # Ensure the Route exists
-      & $oc get route dotnet5crud *> $null
-
-      if ($LASTEXITCODE -ne 0) {
-        & $oc expose service/dotnet5crud
-
-        if ($LASTEXITCODE -ne 0) {
-          throw "Failed to create Route."
-        }
-      }
-
-      # Verify the final rollout
-      & $oc rollout status deployment/dotnet5crud --timeout=180s
-
       if ($LASTEXITCODE -ne 0) {
         & $oc get pods
         & $oc logs deployment/dotnet5crud --tail=100
         throw "Deployment rollout failed."
       }
 
+      # Create Service if missing
+      & $oc get service dotnet5crud *> $null
+      if ($LASTEXITCODE -ne 0) {
+        & $oc expose deployment/dotnet5crud --port=8080 --target-port=8080
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to create OpenShift Service."
+        }
+      }
+
+      # Create Route if missing
+      & $oc get route dotnet5crud *> $null
+      if ($LASTEXITCODE -ne 0) {
+        & $oc expose service/dotnet5crud
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to create OpenShift Route."
+        }
+      }
+
+      # Final verification
+      & $oc rollout status deployment/dotnet5crud --timeout=180s
+      if ($LASTEXITCODE -ne 0) {
+        & $oc get pods
+        & $oc logs deployment/dotnet5crud --tail=100
+        throw "Final deployment verification failed."
+      }
+
       & $oc get deployment,pods,services,routes
 
-      Write-Host "OpenShift deployment completed successfully."
+      Write-Host "Deployment completed successfully."
       Write-Host "Image deployed: $image"
+
   env:
     OPENSHIFT_TOKEN: $(OPENSHIFT_TOKEN)
+
